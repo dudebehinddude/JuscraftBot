@@ -1,8 +1,11 @@
 ﻿using System.Reflection;
 using Discord;
+using Discord.Commands;
 using Discord.Interactions;
 using Discord.WebSocket;
 using DotNetEnv;
+using Serilog;
+using Serilog.Events;
 
 namespace JuscraftBot
 {
@@ -13,6 +16,16 @@ namespace JuscraftBot
 
     public static async Task Main()
     {
+      Log.Logger = new LoggerConfiguration()
+                  .MinimumLevel.Verbose()
+                  .Enrich.FromLogContext()
+                  .WriteTo.Console()
+                  .CreateLogger();
+
+      _client = new DiscordSocketClient();
+
+      _client.Log += LogAsync;
+
       var config = new DiscordSocketConfig
       {
         GatewayIntents = GatewayIntents.All | GatewayIntents.MessageContent
@@ -26,39 +39,40 @@ namespace JuscraftBot
 
       if (string.IsNullOrEmpty(discordToken))
       {
-        Console.WriteLine("Error: TOKEN environment variable not set. Please create a .env file.");
+        Log.Error("Error: TOKEN environment variable not set. Please create a .env file.");
         return;
       }
       if (string.IsNullOrEmpty(serverID))
       {
-        Console.WriteLine("Error: GUILD_ID environment variable not set. Please create a .env file.");
+        Log.Error("Error: GUILD_ID environment variable not set. Please create a .env file.");
         return;
       }
       if (!ulong.TryParse(serverID, out ulong guildId) || guildId == 0)
       {
-        Console.WriteLine("Error: GUILD_ID environment variable cannot be parsed as a ulong.");
+        Log.Error("Error: GUILD_ID environment variable cannot be parsed as a ulong.");
         return;
       }
 
       // For slash commands
-      _interactionService = new InteractionService(_client.Rest);
-      _interactionService.Log += Log;
+      _interactionService = new InteractionService(_client);
+      _interactionService.Log += LogAsync;
+      _interactionService.SlashCommandExecuted += SlashCommandExecuted;
       await _interactionService.AddModulesAsync(Assembly.GetEntryAssembly(), null); // add command modules automatically
 
       // Setup
-      _client.Log += Log;
+      _client.Log += LogAsync;
       _client.Ready += async () =>
       {
-        Console.WriteLine("Bot is online!");
+        Log.Information("Bot is online!");
 
         try
         {
           await _interactionService!.RegisterCommandsToGuildAsync(guildId, true);
-          Console.WriteLine($"Registered commands to Guild ID: {guildId}");
+          Log.Information($"Registered commands to Guild ID: {guildId}");
         }
         catch (Exception ex)
         {
-          Console.WriteLine($"Error registering guild commands: {ex.Message}");
+          Log.Warning($"Error registering guild commands: {ex.Message}");
         }
       };
       _client.InteractionCreated += HandleInteractionAsync;
@@ -68,36 +82,52 @@ namespace JuscraftBot
       await Task.Delay(-1);
     }
 
-    private static Task Log(LogMessage message)
+    private static async Task LogAsync(LogMessage message)
     {
-      // Simple console logging
-      Console.WriteLine($"[{message.Severity}] {message.Source}: {message.Message} {message.Exception}");
-      return Task.CompletedTask;
+      var severity = message.Severity switch
+      {
+        LogSeverity.Critical => LogEventLevel.Fatal,
+        LogSeverity.Error => LogEventLevel.Error,
+        LogSeverity.Warning => LogEventLevel.Warning,
+        LogSeverity.Info => LogEventLevel.Information,
+        LogSeverity.Verbose => LogEventLevel.Verbose,
+        LogSeverity.Debug => LogEventLevel.Debug,
+        _ => LogEventLevel.Information
+      };
+      Log.Write(severity, message.Exception, "[{Source}] {Message}", message.Source, message.Message);
+      await Task.CompletedTask;
     }
 
     private static async Task HandleInteractionAsync(SocketInteraction interaction)
     {
-      try
-      {
-        var context = new SocketInteractionContext(_client!, interaction);
-        var result = await _interactionService!.ExecuteCommandAsync(context, null);
+      var context = new SocketInteractionContext(_client, interaction);
+      var result = await _interactionService!.ExecuteCommandAsync(context, null);
 
-        if (!result.IsSuccess)
-        {
-          Console.WriteLine($"Command execution failed: {result.ErrorReason}");
-          if (!interaction.HasResponded)
-          {
-            await interaction.RespondAsync($"Error: {result.ErrorReason}", ephemeral: true);
-          }
-        }
-      }
-      catch (Exception ex)
+      if (!result.IsSuccess)
       {
-        Console.WriteLine($"Error handling interaction: {ex.Message} {ex.StackTrace}");
+        Log.Warning($"Command execution failed: {result.ErrorReason}");
         if (!interaction.HasResponded)
         {
-          await interaction.RespondAsync("An unexpected error occurred!", ephemeral: true);
+          await interaction.RespondAsync($"Error: {result.ErrorReason}", ephemeral: true);
         }
+      }
+
+    }
+
+    private static async Task SlashCommandExecuted(SlashCommandInfo commandInfo, IInteractionContext ctx, Discord.Interactions.IResult result)
+    {
+      if (!result.IsSuccess)
+      {
+        var response = result.Error switch
+        {
+          InteractionCommandError.UnmetPrecondition => $"{result.ErrorReason}",
+          InteractionCommandError.UnknownCommand => "Unknown command",
+          InteractionCommandError.BadArgs => "Invalid number or arguments",
+          InteractionCommandError.Exception => $"Command exception: {result.ErrorReason}",
+          InteractionCommandError.Unsuccessful => "Command could not be executed",
+          _ => "An unknown error occurred"
+        };
+        await ctx.Interaction.RespondAsync(response, ephemeral: true);
       }
     }
   }
