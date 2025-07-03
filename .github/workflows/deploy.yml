@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+
+  deploy:
+
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the Docker image
+      run: docker buildx build -t juscraftbot:${{ github.sha }} .
+
+    - name: Create .env file from GitHub Secret
+      run: |
+        echo "${{ secrets.DEPLOY_ENV_FILE }}" > ./JuscraftBot/.env
+
+    - name: Stop and Remove Old Container (if exists)
+      run: |
+        if [ "$(docker ps -aq -f name=juscraftbot-container)" ]; then
+          docker stop juscraftbot-container
+          docker rm juscraftbot-container
+        fi
+
+    - name: Run New Docker Container with Env File
+      run: docker run -d --name juscraftbot-container --env-file ./JuscraftBot/.env --restart unless-stopped juscraftbot:${{ github.sha }}
