@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+README.md
+.gitattributes
+
+# Docker
+Dockerfile*
+.dockerignore
+docker-compose*
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.sln.iml
+
+# Build output (these will be built inside container)
+**/bin/
+**/obj/
+**/out/
+
+# Test results
+**/TestResults/
+
+# User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Logs
+*.log
+**/logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
